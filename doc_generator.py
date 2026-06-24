@@ -6,6 +6,7 @@ import glob
 from dotenv import load_dotenv
 import anthropic
 from atlassian import Confluence
+
 load_dotenv()
 
 # ==========================================
@@ -92,23 +93,28 @@ def gather_source_materials(sources_dir="sources"):
 # ==========================================
 # 3. LLM DRAFT GENERATION
 # ==========================================
+def load_style_guide(style_guide_path="style_guide.md"):
+    """Loads the style guide from disk. Returns empty string if not found."""
+    if not os.path.isfile(style_guide_path):
+        print(f"  No style guide found at {style_guide_path}. Using defaults.")
+        return ""
+    with open(style_guide_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def generate_draft(source_data, doc_title="Technical Documentation Draft"):
-    """Generates a structured Markdown draft via Claude Haiku."""
+    """Generates a structured Markdown draft via Claude Haiku, guided by style_guide.md."""
     print("Generating Markdown draft via Claude...")
+
+    style_guide = load_style_guide()
 
     prompt = f"""You are an expert technical writer at an infrastructure company.
 Using the raw source data below, write a comprehensive internal technical documentation draft in Markdown.
 
-STRUCTURE REQUIREMENTS:
-1. Start with '# {doc_title}' followed by a '## Summary' section.
-2. Include a metadata block: 'Ownership: [Team]', 'Last Reviewed: [today]', 'Keywords: [tags]'.
-3. Use task-based headings (e.g., '## How to Verify the Health Check').
-4. End with a '## Related Links' section.
+The document title is: {doc_title}
 
-STYLE:
-- Active voice throughout.
-- Define acronyms on first use.
-- Use markdown admonitions for warnings (> **Warning:** ...).
+STYLE GUIDE (follow strictly):
+{style_guide}
 
 RAW SOURCE DATA:
 {source_data}"""
