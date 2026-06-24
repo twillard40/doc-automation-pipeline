@@ -1,0 +1,19 @@
+{
+  "jira_tickets": [
+    "PROJ-101: Implement retry logic for upstream timeout",
+    "Status: In Review"
+  ],
+  "slack_threads": [
+    "Dave: 'Default timeout is 30s, needs sudo to change.'",
+    "Elena: 'Agreed, document the config file path too.'"
+  ],
+  "git_commits": [
+    "feat: add health-check endpoint",
+    "fix: resolve connection pool leak on restart"
+  ],
+  "api_specs": [
+    "POST /v1/health/verify",
+    "Headers: Authorization: Bearer <token>",
+    "Returns: 200 OK or 503 Service Unavailable"
+  ]
+}

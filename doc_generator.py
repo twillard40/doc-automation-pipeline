@@ -142,6 +142,9 @@ def run_vale_linter(file_path):
             text=True,
             check=False
         )
+        if not result.stdout.strip():
+            print("  Vale returned no output. Skipping.")
+            return
         violations = json.loads(result.stdout)
         if violations:
             total = sum(len(v) for v in violations.values())
