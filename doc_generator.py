@@ -3,6 +3,7 @@ import subprocess
 import json
 import sys
 import glob
+import requests
 from dotenv import load_dotenv
 import anthropic
 from atlassian import Confluence
@@ -19,6 +20,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 SPACE_KEY = os.environ.get("CONFLUENCE_SPACE", "ENG")
 PARENT_PAGE_ID = os.environ.get("CONFLUENCE_PARENT_ID", "")
+JIRA_JQL = os.environ.get("JIRA_JQL", "")
 
 required_vars = {
     "CONFLUENCE_URL": CONFLUENCE_URL,
@@ -88,6 +90,69 @@ def gather_source_materials(sources_dir="sources"):
         sys.exit(1)
 
     return "\n\n".join(collected)
+
+
+def gather_jira_tickets(jql_query):
+    """Pulls tickets from Jira using a configurable JQL query via the v3 REST API."""
+    print(f"Pulling Jira tickets (JQL: {jql_query})...")
+
+    try:
+        url = f"{CONFLUENCE_URL}/rest/api/3/search/jql"
+        params = {
+            "jql": jql_query,
+            "maxResults": 25,
+            "fields": "summary,status,priority,issuetype,description,labels"
+        }
+        resp = requests.get(
+            url,
+            params=params,
+            auth=(CONFLUENCE_USER, CONFLUENCE_TOKEN)
+        )
+        resp.raise_for_status()
+        issues = resp.json().get("issues", [])
+
+        if not issues:
+            print("  No tickets found.")
+            return ""
+
+        ticket_lines = []
+        for issue in issues:
+            key = issue["key"]
+            fields = issue["fields"]
+            summary = fields.get("summary", "No summary")
+            status = fields.get("status", {}).get("name", "Unknown")
+            priority = fields.get("priority", {}).get("name", "None")
+            issue_type = fields.get("issuetype", {}).get("name", "Task")
+            labels = ", ".join(fields.get("labels", [])) or "None"
+
+            # v3 API returns description as Atlassian Document Format (JSON)
+            desc_field = fields.get("description")
+            if desc_field and isinstance(desc_field, dict):
+                # Extract text from ADF content nodes
+                desc_parts = []
+                for block in desc_field.get("content", []):
+                    for inline in block.get("content", []):
+                        if inline.get("type") == "text":
+                            desc_parts.append(inline.get("text", ""))
+                description = " ".join(desc_parts) or "No description provided."
+            else:
+                description = "No description provided."
+
+            ticket_lines.append(
+                f"### {key}: {summary}\n"
+                f"- Type: {issue_type}\n"
+                f"- Status: {status}\n"
+                f"- Priority: {priority}\n"
+                f"- Labels: {labels}\n"
+                f"- Description: {description}\n"
+            )
+
+        print(f"  Pulled {len(issues)} ticket(s).")
+        return f"--- Source: Jira ({jql_query}) ---\n" + "\n".join(ticket_lines)
+
+    except Exception as e:
+        print(f"  Jira pull failed: {e}")
+        return ""
 
 
 # ==========================================
@@ -192,9 +257,30 @@ def validate_retrieval_fields(file_path):
 # 6. MARKDOWN TO CONFLUENCE XHTML + EXPORT
 # ==========================================
 def convert_to_confluence_xhtml(file_path):
-    """Converts Markdown to Confluence Storage Format with automation notice."""
+    """Converts Markdown to Confluence Storage Format using the markdown library."""
+    import markdown
+
     with open(file_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+        md_text = f.read()
+
+    # Convert markdown to HTML with extensions for tables, code blocks, etc.
+    html_body = markdown.markdown(
+        md_text,
+        extensions=["tables", "fenced_code", "nl2br", "sane_lists"]
+    )
+
+    # Wrap code blocks in Confluence code macro for proper rendering
+    html_body = html_body.replace(
+        "<code>",
+        '<code>'
+    ).replace(
+        "<pre>",
+        '<ac:structured-macro ac:name="code" ac:schema-version="1">'
+        '<ac:plain-text-body><![CDATA['
+    ).replace(
+        "</pre>",
+        ']]></ac:plain-text-body></ac:structured-macro>'
+    )
 
     notice = (
         '<ac:structured-macro ac:name="info" ac:schema-version="1">'
@@ -203,23 +289,7 @@ def convert_to_confluence_xhtml(file_path):
         '</ac:rich-text-body></ac:structured-macro>'
     )
 
-    xhtml = notice
-    for line in lines:
-        stripped = line.rstrip()
-        if stripped.startswith("# "):
-            xhtml += f"<h1>{stripped[2:]}</h1>"
-        elif stripped.startswith("## "):
-            xhtml += f"<h2>{stripped[3:]}</h2>"
-        elif stripped.startswith("### "):
-            xhtml += f"<h3>{stripped[4:]}</h3>"
-        elif stripped.startswith("- "):
-            xhtml += f"<ul><li>{stripped[2:]}</li></ul>"
-        elif stripped.startswith("```"):
-            continue  # skip fences for now
-        elif stripped:
-            xhtml += f"<p>{stripped}</p>"
-
-    return xhtml
+    return notice + html_body
 
 
 def export_to_confluence(title, html_content):
@@ -268,6 +338,12 @@ if __name__ == "__main__":
 
     # 1. Ingest
     raw = gather_source_materials()
+
+    # 1b. Pull Jira tickets if JQL query is configured
+    if JIRA_JQL:
+        jira_data = gather_jira_tickets(JIRA_JQL)
+        if jira_data:
+            raw = raw + "\n\n" + jira_data
 
     # 2. Generate
     draft_path = generate_draft(raw, doc_title)
